@@ -8,7 +8,7 @@ import subprocess
 import sys
 import textwrap
 
-VERSION = '2.6.2'
+VERSION = '3.0.0'
 
 
 # Core utils
@@ -28,6 +28,10 @@ GREEN = '\033[32m'
 GREY = '\033[37m'
 YELLOW = '\033[93m'
 RED = '\033[91m'
+
+
+def flat_map(func, l):
+    return sum(map(func, l), [])
 
 
 def non_empty_lines(s):
@@ -733,7 +737,7 @@ def slidable_after(b):
 
 
 def traverse():
-    global up_branch, empty_line_status, managed_branches
+    global down_branches, up_branch, empty_line_status, managed_branches
 
     def flush():
         global branch_defs_by_sha_in_reflog, initial_log_shas_cached, remaining_log_shas_cached, remote_tracking_branches_cached, sha_by_refspec_cached
@@ -756,12 +760,18 @@ def traverse():
 
     for b in itertools.dropwhile(lambda x: x != cb, managed_branches):
         u = up_branch.get(b)
-        needs_rebase = u and not (is_ancestor(u, b) and sha_by_refspec(u) == fork_point(b))
+
+        needs_slide_out = u and is_ancestor(b, u) and sha_by_refspec(u) != sha_by_refspec(b)
+        if needs_slide_out:
+            # Avoid unnecessary fork point check if we already now that the branch qualifies for slide out.
+            needs_rebase = False
+        else:
+            needs_rebase = u and not (is_ancestor(u, b) and sha_by_refspec(u) == fork_point(b))
         s, remote = get_remote_sync_status(b)
         statuses_to_sync = (UNTRACKED, UNTRACKED_ON, AHEAD_OF_REMOTE, BEHIND_REMOTE, DIVERGED_FROM_REMOTE)
         needs_remote_sync = s in statuses_to_sync
 
-        if b != cb and (needs_rebase or needs_remote_sync):
+        if b != cb and (needs_slide_out or needs_rebase or needs_remote_sync):
             print_new_line(False)
             print >> sys.stderr, "Checking out %s%s%s" % (BOLD, b, ENDC)
             go(b)
@@ -769,7 +779,25 @@ def traverse():
             print_new_line(False)
             status()
             print_new_line(True)
-        if needs_rebase:
+        if needs_slide_out:
+            print_new_line(False)
+            ans = raw_input(
+                "Branch %s%s%s is merged into %s%s%s. Slide %s%s%s out of the tree of branch dependencies? [y/n/q] " %
+                (BOLD, b, ENDC, BOLD, u, ENDC, BOLD, b, ENDC)).lower()
+            if ans in ('y', 'yes'):
+                for d in down_branches.get(b) or []:
+                    up_branch[d] = u
+                down_branches[u] = flat_map(lambda ud: (down_branches.get(b) or []) if ud == b else [ud],
+                                            down_branches[u])
+                if b in annotations:
+                    del annotations[b]
+                save_definition_file()
+                # No need to flush caches since nothing changed in commit/branch structure (only machete-specific changes happened).
+                continue  # No need to sync branch `b` with remote since it just got removed from the tree of dependencies.
+            elif ans in ('q', 'quit'):
+                return
+            # If user answered 'no', we don't try to rebase but still suggest to sync with remote (if needed).
+        elif needs_rebase:
             print_new_line(False)
             ans = raw_input("Rebase %s%s%s onto %s%s%s? [y/n/q] " % (BOLD, b, ENDC, BOLD, u, ENDC)).lower()
             if ans in ('y', 'yes'):

@@ -1,5 +1,9 @@
 # Release notes
 
+## New in git-machete 3.0.0
+
+- changed: for branches that are behind their upstream (merged to upstream), `traverse` suggests to slide them out instead of rebase onto that upstream
+
 ## New in git-machete 2.6.2
 
 - improved: fork-point algorithm and upstream inference algorithm taking into account reflogs of remote counterparts of local branches
